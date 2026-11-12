@@ -42,7 +42,9 @@ const persistedPort = (() => {
     return (isFinite(n) && n >= 1024 && n <= 65535) ? n : null;
   } catch { return null; }
 })();
-const STARTING_PORT = persistedPort || DEFAULT_PORT;
+const envPort = process.env.PORT ? parseInt(process.env.PORT, 10) : null;
+const STARTING_PORT = (envPort && isFinite(envPort) && envPort > 0) ? envPort : (persistedPort || DEFAULT_PORT);
+const HOST = process.env.HOST || (process.env.PORT || process.env.RENDER ? '0.0.0.0' : '127.0.0.1');
 const MAX_PORT_SCAN = 50; // 47371 → 47420 is enough headroom for any conceivable collision
 
 const app = express();
@@ -58,12 +60,28 @@ const app = express();
 // also localhost.
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-  const allow =
-    !origin ||
-    /^https?:\/\/localhost(:\d+)?$/i.test(origin) ||
-    /^https?:\/\/127\.0\.0\.1(:\d+)?$/i.test(origin) ||
-    /^https?:\/\/\[::1\](:\d+)?$/i.test(origin);
-  if (!allow) {
+  const host = req.headers.host;
+  let isAllowedOrigin = false;
+  if (!origin) {
+    isAllowedOrigin = true;
+  } else {
+    try {
+      const parsed = new URL(origin);
+      if (
+        /^localhost(:\d+)?$/i.test(parsed.host) ||
+        /^127\.0\.0\.1(:\d+)?$/i.test(parsed.host) ||
+        /^\[::1\](:\d+)?$/i.test(parsed.host) ||
+        parsed.host === host ||
+        parsed.hostname.endsWith('.onrender.com') ||
+        Boolean(process.env.RENDER)
+      ) {
+        isAllowedOrigin = true;
+      }
+    } catch {
+      isAllowedOrigin = false;
+    }
+  }
+  if (!isAllowedOrigin) {
     return res.status(403).json({ error: 'Cross-origin request refused' });
   }
   if (origin) {
@@ -2176,17 +2194,21 @@ process.on('unhandledRejection', (err) => { console.error(`  Unexpected error (t
 // every byte stays on the user's machine, which the privacy promise depends on.
 let activeServer = null;
 function startServer(port) {
-  const server = app.listen(port, '127.0.0.1', () => {
+  const server = app.listen(port, HOST, () => {
     activeServer = server;
     // Persist the chosen port — the .bat launcher reads this for the browser URL.
     // Writing on EVERY successful boot means: if our preferred 47371 was busy and
     // we landed on 47372 instead, next launch tries 47372 first (cuts collision
     // scans in half on repeated reboots of whatever was holding 47371).
-    try { fs.writeFileSync(PORT_FILE, String(port), 'utf-8'); } catch { /* ignore */ }
+    if (!process.env.PORT) { try { fs.writeFileSync(PORT_FILE, String(port), 'utf-8'); } catch { /* ignore */ } }
     console.log(`\n  Free GST Billing Software running at http://localhost:${port}`);
     console.log(`  Data stored in: ${DATA_DIR}\n`);
   });
   server.on('error', (err) => {
+    if (process.env.PORT) {
+      console.error(`  Failed to bind to assigned PORT ${port}: ${err.message}`);
+      process.exit(1);
+    }
     // v1.10.83 - EACCES too: Windows reserves port ranges for Hyper-V / WSL
     // and refuses them with "access denied" rather than "in use".
     if ((err.code === 'EADDRINUSE' || err.code === 'EACCES') && port !== 0 && port < STARTING_PORT + MAX_PORT_SCAN) {
