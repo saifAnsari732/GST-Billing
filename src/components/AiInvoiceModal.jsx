@@ -1,17 +1,58 @@
 import { useState, useRef, useEffect } from 'react';
-import { X, Upload, Sparkles, FileText, CheckCircle2, Loader2, Key, AlertCircle, RefreshCw, Layers } from 'lucide-react';
+import { X, Upload, Sparkles, FileText, CheckCircle2, Loader2, Key, AlertCircle, RefreshCw } from 'lucide-react';
 import { toast } from './Toast';
 
-export default function AiInvoiceModal({ isOpen, onClose, onApply, currentItemsCount = 0 }) {
+function tryParseDirectJson(jsonStr) {
+  try {
+    const parsed = JSON.parse(jsonStr);
+    let rawItems = [];
+    let rawClient = null;
+    let rawDetails = null;
+
+    if (Array.isArray(parsed)) {
+      rawItems = parsed;
+    } else if (parsed && typeof parsed === 'object') {
+      if (Array.isArray(parsed.items)) rawItems = parsed.items;
+      else if (Array.isArray(parsed.products)) rawItems = parsed.products;
+      else if (Array.isArray(parsed.itemList)) rawItems = parsed.itemList;
+      else if (Array.isArray(parsed.lines)) rawItems = parsed.lines;
+      if (parsed.client) rawClient = parsed.client;
+      if (parsed.details) rawDetails = parsed.details;
+    }
+
+    if (rawItems.length > 0) {
+      const items = rawItems.map((item, idx) => ({
+        id: (Date.now() + idx).toString(),
+        name: String(item.name || item.description || item.title || item.product || `Item ${idx + 1}`).trim(),
+        hsn: String(item.hsn || item.sac || item.hsnCode || '').trim(),
+        quantity: Number(item.quantity || item.qty || 1) || 1,
+        unit: String(item.unit || item.uqc || 'Nos').trim() || 'Nos',
+        rate: Number(item.rate || item.price || item.unitPrice || 0) || 0,
+        discount: Number(item.discount || 0) || 0,
+        taxPercent: Number(item.taxPercent ?? item.gst ?? item.tax ?? 18),
+        cessPercent: Number(item.cessPercent || 0) || 0,
+      }));
+      return { items, client: rawClient, details: rawDetails };
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+export default function AiInvoiceModal({ isOpen, onClose, onApply, currentItemsCount = 0, mode = 'invoice' }) {
+  const isProductsMode = mode === 'products';
   const [activeTab, setActiveTab] = useState('upload'); // 'upload' | 'text'
   const [file, setFile] = useState(null);
   const [fileBase64, setFileBase64] = useState('');
+  const [rawJsonText, setRawJsonText] = useState('');
   const [previewUrl, setPreviewUrl] = useState('');
   const [textContent, setTextContent] = useState('');
   const [apiKey, setApiKey] = useState(() => localStorage.getItem('fgsb_gemini_api_key') || '');
   const [hasServerKey, setHasServerKey] = useState(false);
   const [showKeyInput, setShowKeyInput] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
   const [extractedData, setExtractedData] = useState(null);
 
   // Configuration options for applying
@@ -23,7 +64,7 @@ export default function AiInvoiceModal({ isOpen, onClose, onApply, currentItemsC
 
   useEffect(() => {
     if (isOpen) {
-      // Check server API key status
+      setErrorMsg('');
       fetch('/api/ai/status')
         .then(r => r.json())
         .then(d => {
@@ -38,11 +79,21 @@ export default function AiInvoiceModal({ isOpen, onClose, onApply, currentItemsC
 
   if (!isOpen) return null;
 
+  const isJsonFile = Boolean(
+    file && (file.type === 'application/json' || file.name.toLowerCase().endsWith('.json'))
+  );
+  const isJsonTextInput = activeTab === 'text' && (
+    textContent.trim().startsWith('[') || textContent.trim().startsWith('{')
+  );
+  const isDirectJson = (activeTab === 'upload' && isJsonFile) || isJsonTextInput;
+
   const handleFileChange = (e) => {
     const selected = e.target.files?.[0];
     if (!selected) return;
 
+    setErrorMsg('');
     setFile(selected);
+    setRawJsonText('');
     const reader = new FileReader();
 
     if (selected.type.startsWith('image/')) {
@@ -63,9 +114,10 @@ export default function AiInvoiceModal({ isOpen, onClose, onApply, currentItemsC
     } else if (selected.type === 'application/json' || selected.name.toLowerCase().endsWith('.json')) {
       setPreviewUrl('');
       reader.onload = () => {
+        const content = reader.result;
+        setRawJsonText(content);
         try {
-          setTextContent(reader.result);
-          const base64 = btoa(unescape(encodeURIComponent(reader.result)));
+          const base64 = btoa(unescape(encodeURIComponent(content)));
           setFileBase64(base64);
         } catch {
           setFileBase64('');
@@ -73,6 +125,7 @@ export default function AiInvoiceModal({ isOpen, onClose, onApply, currentItemsC
       };
       reader.readAsText(selected);
     } else {
+      setErrorMsg('Unsupported file format. Please upload an Image (PNG/JPG), PDF, or JSON file.');
       toast('Please upload an Image (PNG/JPG), PDF, or JSON file', 'warning');
       setFile(null);
       setFileBase64('');
@@ -91,21 +144,46 @@ export default function AiInvoiceModal({ isOpen, onClose, onApply, currentItemsC
 
   const handleSaveApiKey = (key) => {
     setApiKey(key);
+    setErrorMsg('');
     localStorage.setItem('fgsb_gemini_api_key', key.trim());
   };
 
   const handleExtract = async () => {
+    setErrorMsg('');
+
     if (activeTab === 'upload' && !file) {
-      toast('Please upload a file or switch to paste text', 'warning');
+      setErrorMsg('Please upload a file (PDF, Image, or JSON) or switch to Paste Text.');
       return;
     }
     if (activeTab === 'text' && !textContent.trim()) {
-      toast('Please paste invoice or item details text', 'warning');
+      setErrorMsg('Please paste invoice text, JSON, or an item prompt.');
       return;
     }
+
+    // 1. Try instant client-side JSON parsing first (no Gemini API key needed!)
+    if (activeTab === 'upload' && isJsonFile && rawJsonText) {
+      const direct = tryParseDirectJson(rawJsonText);
+      if (direct) {
+        setExtractedData(direct);
+        toast(`Imported ${direct.items.length} item${direct.items.length === 1 ? '' : 's'} from JSON!`, 'success');
+        return;
+      }
+    }
+    if (isJsonTextInput) {
+      const direct = tryParseDirectJson(textContent.trim());
+      if (direct) {
+        setExtractedData(direct);
+        toast(`Imported ${direct.items.length} item${direct.items.length === 1 ? '' : 's'} from JSON!`, 'success');
+        return;
+      }
+    }
+
+    // 2. Otherwise require Gemini API Key
     if (!hasServerKey && !apiKey.trim()) {
       setShowKeyInput(true);
-      toast('Please enter your Google Gemini API Key to continue', 'warning');
+      const msg = 'Gemini API Key is required for PDF/Image/Text extraction. Paste your free key above (or upload a structured .json file).';
+      setErrorMsg(msg);
+      toast(msg, 'warning');
       return;
     }
 
@@ -122,7 +200,7 @@ export default function AiInvoiceModal({ isOpen, onClose, onApply, currentItemsC
         payload.file = {
           data: fileBase64,
           name: file.name,
-          mimeType: file.type || (file.name.endsWith('.pdf') ? 'application/pdf' : 'application/json'),
+          mimeType: file.type || (file.name.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'application/json'),
         };
       }
 
@@ -146,7 +224,9 @@ export default function AiInvoiceModal({ isOpen, onClose, onApply, currentItemsC
       }
     } catch (err) {
       console.error(err);
-      toast(err.message || 'AI extraction failed. Check your API key or document.', 'error');
+      const msg = err.message || 'AI extraction failed. Check your API key or document.';
+      setErrorMsg(msg);
+      toast(msg, 'error');
     } finally {
       setLoading(false);
     }
@@ -154,7 +234,7 @@ export default function AiInvoiceModal({ isOpen, onClose, onApply, currentItemsC
 
   const handleApplyClick = () => {
     if (!extractedData || !extractedData.items || extractedData.items.length === 0) {
-      toast('No items to apply', 'warning');
+      setErrorMsg('No items to apply');
       return;
     }
 
@@ -202,10 +282,12 @@ export default function AiInvoiceModal({ isOpen, onClose, onApply, currentItemsC
             </div>
             <div>
               <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 700, color: 'var(--text-primary, #0f172a)' }}>
-                AI Smart Auto-Fill (Invoice & Items)
+                {isProductsMode ? 'AI Smart Product Importer' : 'AI Smart Auto-Fill (Invoice & Items)'}
               </h3>
               <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-muted, #64748b)' }}>
-                Upload an invoice (PDF, Image, JSON) or paste text to auto-populate items & party details.
+                {isProductsMode
+                  ? 'Upload a product catalog, bill, price list (PDF, Image, JSON) or paste text to add products.'
+                  : 'Upload an invoice (PDF, Image, JSON) or paste text to auto-populate items & party details.'}
               </p>
             </div>
           </div>
@@ -236,7 +318,7 @@ export default function AiInvoiceModal({ isOpen, onClose, onApply, currentItemsC
               ) : apiKey ? (
                 <span style={{ color: '#10b981', fontWeight: 600 }}>Personal Gemini Key Saved</span>
               ) : (
-                <span style={{ color: '#b45309', fontWeight: 500 }}>No Gemini API Key found</span>
+                <span style={{ color: '#b45309', fontWeight: 500 }}>No Gemini API Key (JSON works offline without key)</span>
               )}
             </span>
           </div>
@@ -279,6 +361,26 @@ export default function AiInvoiceModal({ isOpen, onClose, onApply, currentItemsC
           )}
         </div>
 
+        {/* Inline Error Alert */}
+        {errorMsg && (
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.5rem',
+            padding: '0.65rem 0.85rem',
+            marginBottom: '1rem',
+            borderRadius: '8px',
+            background: '#fef2f2',
+            border: '1px solid #fecaca',
+            color: '#dc2626',
+            fontSize: '0.82rem',
+            fontWeight: 500,
+          }}>
+            <AlertCircle size={16} style={{ flexShrink: 0 }} />
+            <span>{errorMsg}</span>
+          </div>
+        )}
+
         {/* Main Content Area (Scrollable) */}
         <div style={{ flex: 1, overflowY: 'auto', paddingRight: '4px' }}>
           {!extractedData ? (
@@ -287,7 +389,7 @@ export default function AiInvoiceModal({ isOpen, onClose, onApply, currentItemsC
               <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', borderBottom: '1px solid var(--border-color, #e2e8f0)', paddingBottom: '0.5rem' }}>
                 <button
                   type="button"
-                  onClick={() => setActiveTab('upload')}
+                  onClick={() => { setActiveTab('upload'); setErrorMsg(''); }}
                   className={`btn ${activeTab === 'upload' ? 'btn-primary' : 'btn-secondary'}`}
                   style={{ fontSize: '0.85rem', padding: '0.4rem 0.85rem' }}
                 >
@@ -295,7 +397,7 @@ export default function AiInvoiceModal({ isOpen, onClose, onApply, currentItemsC
                 </button>
                 <button
                   type="button"
-                  onClick={() => setActiveTab('text')}
+                  onClick={() => { setActiveTab('text'); setErrorMsg(''); }}
                   className={`btn ${activeTab === 'text' ? 'btn-primary' : 'btn-secondary'}`}
                   style={{ fontSize: '0.85rem', padding: '0.4rem 0.85rem' }}
                 >
@@ -349,7 +451,7 @@ export default function AiInvoiceModal({ isOpen, onClose, onApply, currentItemsC
                       <button
                         type="button"
                         className="icon-btn"
-                        onClick={() => { setFile(null); setFileBase64(''); setPreviewUrl(''); }}
+                        onClick={() => { setFile(null); setFileBase64(''); setRawJsonText(''); setPreviewUrl(''); setErrorMsg(''); }}
                         title="Remove file"
                         style={{ border: 'none', background: 'transparent', cursor: 'pointer' }}
                       >
@@ -374,14 +476,14 @@ export default function AiInvoiceModal({ isOpen, onClose, onApply, currentItemsC
               {activeTab === 'text' && (
                 <div>
                   <label className="form-label" style={{ fontSize: '0.82rem', fontWeight: 600 }}>
-                    Paste Invoice Text, WhatsApp Order, or Item Prompt:
+                    Paste Invoice Text, JSON Array, WhatsApp Order, or Item Prompt:
                   </label>
                   <textarea
                     className="form-input"
                     rows={6}
-                    placeholder="Example:&#10;1. 5 Bags Cement @ 380 each, 28% GST&#10;2. 10 Boxes of Screws @ 120 each, 18% GST&#10;Customer: Sharma Traders, GSTIN: 07AAAAA0000A1Z5"
+                    placeholder="Example:&#10;1. 5 Bags Cement @ 380 each, 28% GST&#10;2. 10 Boxes of Screws @ 120 each, 18% GST&#10;Customer: Sharma Traders, GSTIN: 07AAAAA0000A1Z5&#10;&#10;Or paste JSON: [{ &quot;name&quot;: &quot;Laptop&quot;, &quot;quantity&quot;: 2, &quot;rate&quot;: 45000, &quot;taxPercent&quot;: 18 }]"
                     value={textContent}
-                    onChange={e => setTextContent(e.target.value)}
+                    onChange={e => { setTextContent(e.target.value); setErrorMsg(''); }}
                     style={{ width: '100%', fontSize: '0.85rem', fontFamily: 'monospace', resize: 'vertical' }}
                   />
                 </div>
@@ -471,6 +573,7 @@ export default function AiInvoiceModal({ isOpen, onClose, onApply, currentItemsC
               </div>
 
               {/* Application Options */}
+              {!isProductsMode && (
               <div style={{ marginTop: '1rem', display: 'flex', flexDirection: 'column', gap: '0.4rem', fontSize: '0.82rem' }}>
                 <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
                   <input
@@ -508,6 +611,7 @@ export default function AiInvoiceModal({ isOpen, onClose, onApply, currentItemsC
                   </label>
                 )}
               </div>
+              )}
             </div>
           )}
         </div>
@@ -542,6 +646,10 @@ export default function AiInvoiceModal({ isOpen, onClose, onApply, currentItemsC
                 <>
                   <Loader2 size={16} className="spin" /> Extracting with AI...
                 </>
+              ) : isDirectJson ? (
+                <>
+                  <Sparkles size={16} /> Import JSON Items
+                </>
               ) : (
                 <>
                   <Sparkles size={16} /> Extract with Gemini AI
@@ -558,7 +666,7 @@ export default function AiInvoiceModal({ isOpen, onClose, onApply, currentItemsC
                 borderColor: '#059669',
               }}
             >
-              <CheckCircle2 size={16} /> Apply to Invoice
+              <CheckCircle2 size={16} /> {isProductsMode ? 'Add Products to Catalog' : 'Apply to Invoice'}
             </button>
           )}
         </div>

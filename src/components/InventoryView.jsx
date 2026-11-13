@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { Package, Search, Plus, Edit3, Trash2, X, Save, Upload, Table2, Factory } from 'lucide-react';
+import { Package, Search, Plus, Edit3, Trash2, X, Save, Upload, Table2, Factory, Sparkles } from 'lucide-react';
+import AiInvoiceModal from './AiInvoiceModal';
 import { getAllProducts, saveProduct, deleteProduct, getProfile, getStockAlertSettings, getEnabledModules } from '../store';
 import { getAllUnits, getCountryConfig, formatCurrency, isModuleEnabled, isServiceProduct, trackedStock, filterUnitsByMode, getDefaultUnitForMode } from '../utils';
 import { productsCsvToList, PRODUCTS_SAMPLE } from '../utils/listCsv';
@@ -30,6 +31,33 @@ export default function InventoryView() {
   // v1.10.77 (#85) - edit many products at once (see ProductBulkEdit).
   const [bulkEdit, setBulkEdit] = useState(false);
   const [showForm, setShowForm] = useState(false);
+  const [showAiImport, setShowAiImport] = useState(false);
+
+  const handleApplyAiProducts = async ({ items }) => {
+    if (!Array.isArray(items) || items.length === 0) return;
+    let added = 0;
+    for (const item of items) {
+      const sellingPrice = Number(item.rate) || 0;
+      const product = {
+        name: String(item.name || '').trim(),
+        hsn: String(item.hsn || '').trim(),
+        purchasePrice: 0,
+        sellingPrice,
+        rate: sellingPrice,
+        taxPercent: Number(item.taxPercent ?? 18),
+        unit: String(item.unit || 'Pcs').trim() || 'Pcs',
+        kind: 'goods',
+        stock: item.quantity ? Number(item.quantity) : undefined,
+        description: '',
+      };
+      if (product.name) {
+        await saveProduct(product);
+        added++;
+      }
+    }
+    toast(`Added ${added} product${added === 1 ? '' : 's'} to catalog!`, 'success');
+    loadProducts();
+  };
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState({ ...emptyForm });
   const [units, setUnits] = useState(getAllUnits());
@@ -202,6 +230,11 @@ export default function InventoryView() {
           <button className="btn btn-secondary" onClick={() => setShowImport(true)}>
             <Upload size={16} /> Import CSV
           </button>
+          <button className="btn btn-primary" onClick={() => setShowAiImport(true)}
+            style={{ background: 'linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)', borderColor: '#6366f1' }}
+            title="Upload bill, catalog, image, PDF, or JSON to auto-add products using Gemini AI">
+            <Sparkles size={16} /> AI Upload (PDF/Img/JSON)
+          </button>
           <button className="btn btn-secondary" onClick={() => setBulkEdit(true)} disabled={!products.length || bulkEdit}
             title="Edit name, HSN, prices, GST %, unit and stock of many products at once">
             <Table2 size={16} /> Bulk edit
@@ -222,6 +255,14 @@ export default function InventoryView() {
           intro="One product or service per row: Name (required), Type (Goods or Service), HSN/SAC, Unit, Purchase Price, Selling Price, GST % and Stock (leave Stock blank for a service)."
           parse={(text) => { const r = productsCsvToList(text, products); return { list: r.products, skipped: r.skipped, errors: r.errors }; }}
           save={saveProduct} onClose={() => setShowImport(false)} onDone={() => { setShowImport(false); loadProducts(); }} />
+      )}
+      {showAiImport && (
+        <AiInvoiceModal
+          isOpen={showAiImport}
+          onClose={() => setShowAiImport(false)}
+          onApply={handleApplyAiProducts}
+          mode="products"
+        />
       )}
       {showMake && <MakeModal products={products} currency={profileCurrency} onClose={() => setShowMake(false)} onSaved={afterProduction} />}
 
@@ -338,7 +379,13 @@ export default function InventoryView() {
             <Package size={48} />
             <p>{products.length === 0 ? 'No products yet. Add your first product.' : 'No products match your search.'}</p>
             {products.length === 0 && (
-              <button className="btn btn-primary" onClick={openAdd}><Plus size={18} /> Add Product</button>
+              <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center', flexWrap: 'wrap' }}>
+                <button className="btn btn-primary" onClick={openAdd}><Plus size={18} /> Add Product</button>
+                <button className="btn btn-secondary" onClick={() => setShowAiImport(true)}
+                  style={{ borderColor: 'var(--primary)', color: 'var(--primary)' }}>
+                  <Sparkles size={16} /> AI Upload (PDF/Img/JSON)
+                </button>
+              </div>
             )}
           </div>
         ) : (

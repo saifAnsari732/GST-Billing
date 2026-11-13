@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo, memo } from 'react';
-import { Maximize2, ArrowLeft, Plus, Trash2, Download, UserPlus, Pencil, Settings, ChevronUp, ChevronDown, MessageCircle, Mail, Sparkles, Check, Loader, Truck, Printer, Eye, EyeOff, QrCode } from 'lucide-react';
+import { Maximize2, ArrowLeft, Plus, Trash2, Download, UserPlus, Pencil, Settings, ChevronUp, ChevronDown, MessageCircle, Mail, Sparkles, Package, Check, Loader, Truck, Printer, Eye, EyeOff, QrCode } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
 import { saveBill, deleteBill, applyStockChanges, getNextInvoiceNumber, getTermsTemplates, getAllClients, saveClient, getProfile, getAllProducts, getInvoiceDisplayOptions, saveInvoiceDisplayOptions, getAllProfiles, getRegionMode, saveRecurring, getAllRecurring, getAllBills, getEnabledModules, getBusinessType } from '../store';
@@ -7,6 +7,7 @@ import { INVOICE_TYPES, isModuleEnabled, businessKeyOf, GST_DOC_NUMBER, COUNTRIE
 import { getPrintSettings, savePrintSettings } from '../utils/printSettings';
 import { openWhatsAppShare, openEmailShare } from '../utils/share';
 import AiInvoiceModal from './AiInvoiceModal';
+import ProductPickerModal from './ProductPickerModal';
 import { confirmAction, promptAction } from './ConfirmModal';
 import { useCostCentres } from './useCostCentres';
 import { CostCentreSelect } from './CostCentrePicker';
@@ -696,6 +697,16 @@ export default function InvoiceGenerator({ onBack, profile: profileProp, editing
   const [selectedClientId, setSelectedClientId] = useState(null);
   const [showClientModal, setShowClientModal] = useState(false);
   const [showAiModal, setShowAiModal] = useState(false);
+  const [showProductPicker, setShowProductPicker] = useState(false);
+
+  const handlePickProducts = (pickedItems) => {
+    if (!Array.isArray(pickedItems) || pickedItems.length === 0) return;
+    setItems(prev => {
+      const nonBlank = prev.filter(i => (i.name || '').trim() || (i.rate || 0) > 0);
+      return [...nonBlank, ...pickedItems];
+    });
+    toast(`Added ${pickedItems.length} predefined product${pickedItems.length === 1 ? '' : 's'} to invoice`, 'success');
+  };
 
   const handleApplyAiData = ({ items: newItems, client: newClient, details: newDetails, replaceItems }) => {
     if (Array.isArray(newItems) && newItems.length > 0) {
@@ -3638,6 +3649,14 @@ export default function InvoiceGenerator({ onBack, profile: profileProp, editing
           <button className="btn btn-secondary" onClick={shareWhatsApp} disabled={saving} style={{ background: '#25d366', color: '#fff', borderColor: '#25d366' }}>
             <MessageCircle size={18} /> WhatsApp
           </button>
+          <button className="btn btn-secondary" onClick={shareEmail} disabled={saving} title="Send invoice via Email">
+            <Mail size={18} /> Email
+          </button>
+          <button className="btn btn-primary" onClick={() => setShowAiModal(true)} disabled={saving}
+            style={{ background: 'linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)', borderColor: '#6366f1' }}
+            title="Auto-fill items and invoice data from PDF, image or JSON using Gemini AI">
+            <Sparkles size={18} /> AI Auto-Fill
+          </button>
           {ewayOn && (invoiceType === 'tax-invoice' || invoiceType === 'delivery-challan') && (
             <button className="btn btn-secondary" onClick={exportEWayBill} disabled={saving} title="Download E-Way Bill JSON for NIC portal upload">
               <Truck size={18} /> E-Way Bill
@@ -4733,6 +4752,9 @@ export default function InvoiceGenerator({ onBack, profile: profileProp, editing
             ))}
             <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
               <button className="btn btn-secondary mt-2" onClick={addItem}><Plus size={18} /> Add Item</button>
+              <button type="button" className="btn btn-secondary mt-2" onClick={() => setShowProductPicker(true)} title="Select predefined products from your Products catalog">
+                <Package size={16} /> Pick from Products
+              </button>
               <button type="button" className="btn btn-secondary mt-2" onClick={() => setShowAiModal(true)}
                 style={{ borderColor: 'var(--primary)', color: 'var(--primary)' }}
                 title="Upload bill, image, PDF, or JSON to auto-fill items using Gemini AI">
@@ -5071,6 +5093,14 @@ export default function InvoiceGenerator({ onBack, profile: profileProp, editing
 
       {/* P2 #32 — 3-option leave modal. Replaces the previous confusing
           browser confirm() where OK=save was counterintuitive. */}
+      <ProductPickerModal
+        isOpen={showProductPicker}
+        onClose={() => setShowProductPicker(false)}
+        products={products}
+        currency={invoiceOptions.currency}
+        onAddProducts={handlePickProducts}
+      />
+
       <AiInvoiceModal
         isOpen={showAiModal}
         onClose={() => setShowAiModal(false)}

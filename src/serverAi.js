@@ -9,14 +9,18 @@ export async function handleAiParse(req, res) {
     const { file, text, apiKey } = req.body || {};
     const effectiveKey = (apiKey && String(apiKey).trim()) || process.env.GEMINI_API_KEY;
 
-    // 1. Direct JSON handling if user uploaded structured JSON
-    if (file && (file.mimeType === 'application/json' || file.name?.toLowerCase().endsWith('.json'))) {
+    // 1. Direct JSON handling if user uploaded structured JSON or pasted JSON text
+    const isJsonFile = file && (file.mimeType === 'application/json' || file.name?.toLowerCase().endsWith('.json'));
+    const trimmedText = typeof text === 'string' ? text.trim() : '';
+    const isJsonText = !file && (trimmedText.startsWith('[') || trimmedText.startsWith('{'));
+
+    if (isJsonFile || isJsonText) {
       try {
         let jsonStr = '';
-        if (file.data) {
+        if (file?.data) {
           jsonStr = Buffer.from(file.data, 'base64').toString('utf8');
-        } else if (text) {
-          jsonStr = text;
+        } else if (trimmedText) {
+          jsonStr = trimmedText;
         }
         const parsed = JSON.parse(jsonStr);
         let rawItems = [];
