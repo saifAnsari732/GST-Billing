@@ -52,8 +52,8 @@ eq(core.sort(), ['clients', 'dashboard', 'invoicing'], 'core: dashboard, new inv
 for (const t of BUSINESS_TYPES) eq(core.every(id => shown(t.id, id)), true, `${t.id}: core stays on`);
 eq(core.every(id => isModuleEnabled(id, { dashboard: false, invoicing: false, clients: false })), true, 'core ignores a saved "off"');
 const always = MENU_ITEMS.filter(m => !m.module).map(m => m.id).sort();
-eq(always, ['lock', 'settings', 'support'], 'Settings, Support & About and Lock app have no switch');
-eq(SWITCHABLE_MODULES.some(id => ['settings', 'support'].includes(id)), false, 'no type can hide Settings or Support');
+eq(always, ['lock', 'settings'], 'Settings and Lock app have no switch');
+eq(SWITCHABLE_MODULES.some(id => ['settings'].includes(id)), false, 'no type can hide Settings');
 for (const t of BUSINESS_TYPES) eq(['guide', 'notifications', 'controlPanel', 'offlineButton'].every(id => shown(t.id, id)), true, `${t.id}: app helpers stay on (incl. the Offline mode button)`);
 
 console.log('Existing switches untouched until a type is applied');

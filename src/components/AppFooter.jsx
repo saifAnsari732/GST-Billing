@@ -1,12 +1,11 @@
 // v1.10.75 - a small line at the end of the Dashboard only (on other screens
 // it took working space; floating, it covered the table - #83): the app's
-// name and version, who makes it, and the Support page. Only the user sees
+// name and version, and who makes it. Only the user sees
 // it; it is never printed on an invoice. The version comes from the local
 // server, so it works offline.
 import { useEffect, useState } from 'react';
-import { Heart } from 'lucide-react';
 
-export default function AppFooter({ onOpenSupport }) {
+export default function AppFooter() {
   const [version, setVersion] = useState('');
   useEffect(() => {
     let live = true;
@@ -28,11 +27,6 @@ export default function AppFooter({ onOpenSupport }) {
         <span>Free GST Billing{version ? ` v${version}` : ''}</span>
         <span aria-hidden="true">·</span>
         <a href="https://dicecodes.com" target="_blank" rel="noopener noreferrer" style={link}>by DiceCodes</a>
-        <span aria-hidden="true">·</span>
-        <button type="button" onClick={onOpenSupport}
-          style={{ ...link, background: 'none', border: 0, padding: 0, font: 'inherit', fontWeight: 600, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
-          <Heart size={11} style={{ color: '#e11d48', fill: '#e11d48' }} /> Support
-        </button>
       </span>
     </footer>
   );
