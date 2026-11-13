@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
-import { Receipt, Plus, Trash2, Search, Printer, Pencil } from 'lucide-react';
+import { Receipt, Plus, Trash2, Search, Printer, Pencil, MessageCircle, Mail } from 'lucide-react';
+import { openWhatsAppShare, openEmailShare, buildReceiptShareMessage } from '../utils/share';
 import { getAllReceipts, saveReceipt, deleteReceipt, getAllBills, getProfile, getNextInvoiceNumber, saveBill } from '../store';
 import { formatCurrency, numberToWords, belongsToProfile, isUnassignedToBusiness, countsAsSales, businessKeyOf, localToday, amountDue, paymentStatusFor, isCancelledBill } from '../utils';
 import UnassignedBanner from './UnassignedBanner';
@@ -244,6 +245,23 @@ export default function ReceiptVoucher() {
     }
   };
 
+  const shareWhatsApp = (rcp) => {
+    const msg = buildReceiptShareMessage(rcp, profile);
+    const matchedBill = bills.find(b => b.invoiceNumber === rcp.againstInvoice || b.clientName === rcp.clientName);
+    const phone = matchedBill?.data?.client?.phone || matchedBill?.clientPhone || '';
+    openWhatsAppShare(phone, msg);
+    toast('WhatsApp opened with receipt details', 'info');
+  };
+
+  const shareEmail = (rcp) => {
+    const matchedBill = bills.find(b => b.invoiceNumber === rcp.againstInvoice || b.clientName === rcp.clientName);
+    const email = matchedBill?.data?.client?.email || '';
+    const subject = `Payment Receipt ${rcp.receiptNo} - ₹${Number(rcp.amount || 0).toLocaleString('en-IN')}`;
+    const msg = buildReceiptShareMessage(rcp, profile).replace(/\*/g, '');
+    openEmailShare(email, subject, msg);
+    toast('Email client opened with receipt details', 'info');
+  };
+
   const printReceipt = (receipt) => {
     setPreviewReceipt(receipt);
     setTimeout(() => {
@@ -478,6 +496,8 @@ export default function ReceiptVoucher() {
                     <td className="text-muted">{rcp.paymentMode}</td>
                     <td>
                       <div className="table-actions">
+                        <button className="icon-btn icon-btn-green" onClick={() => shareWhatsApp(rcp)} title="Share on WhatsApp"><MessageCircle size={15} /></button>
+                        <button className="icon-btn icon-btn-blue" onClick={() => shareEmail(rcp)} title="Share via Email"><Mail size={15} /></button>
                         <button className="icon-btn icon-btn-blue" onClick={() => printReceipt(rcp)} title="Print"><Printer size={15} /></button>
                         <button className="icon-btn" onClick={() => openEdit(rcp)} title="Edit"><Pencil size={15} /></button>
                         <button className="icon-btn icon-btn-red" onClick={() => handleDelete(rcp.id)} title="Delete"><Trash2 size={15} /></button>

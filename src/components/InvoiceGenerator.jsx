@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef, useCallback, useMemo, memo } from 'react';
-import { Maximize2, ArrowLeft, Plus, Trash2, Download, UserPlus, Pencil, Settings, ChevronUp, ChevronDown, MessageCircle, Check, Loader, Truck, Printer, Eye, EyeOff, QrCode } from 'lucide-react';
+import { Maximize2, ArrowLeft, Plus, Trash2, Download, UserPlus, Pencil, Settings, ChevronUp, ChevronDown, MessageCircle, Mail, Sparkles, Check, Loader, Truck, Printer, Eye, EyeOff, QrCode } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
 import { saveBill, deleteBill, applyStockChanges, getNextInvoiceNumber, getTermsTemplates, getAllClients, saveClient, getProfile, getAllProducts, getInvoiceDisplayOptions, saveInvoiceDisplayOptions, getAllProfiles, getRegionMode, saveRecurring, getAllRecurring, getAllBills, getEnabledModules, getBusinessType } from '../store';
 import { INVOICE_TYPES, isModuleEnabled, businessKeyOf, GST_DOC_NUMBER, COUNTRIES, printedSubtotal, deliveryChargeLine, stockEffect, appliedStock, stockDelta, generateEWayBillJSON, formatCurrency, getCountryConfig, getStatesForCountry, getAllUnits, addCustomUnit, removeCustomUnit, getCountriesForRegion, TDS_SECTIONS, TCS_SECTIONS, REMOVED_TCS_SECTIONS, TERMS_PRESETS, getActiveAccounts, getDefaultAccount, getAccountById, getDefaultUnitForMode, filterUnitsByMode, PAPER_SIZES, getPaperSize, computeInvoiceTotals, clientYearToDate, htmlHasText, ORDER_DETAIL_FIELDS, invoiceOptionOn, DEFAULT_DECLARATION, decodeGstin, safePageBoundaries, localToday, toLocalIsoDate, parseLocalDate, paymentStatusFor, getStateCode } from '../utils';
 import { getPrintSettings, savePrintSettings } from '../utils/printSettings';
-import { openWhatsAppShare } from '../utils/share';
+import { openWhatsAppShare, openEmailShare } from '../utils/share';
+import AiInvoiceModal from './AiInvoiceModal';
 import { confirmAction, promptAction } from './ConfirmModal';
 import { useCostCentres } from './useCostCentres';
 import { CostCentreSelect } from './CostCentrePicker';
@@ -694,6 +695,37 @@ export default function InvoiceGenerator({ onBack, profile: profileProp, editing
   const [clientPickerIdx, setClientPickerIdx] = useState(-1);
   const [selectedClientId, setSelectedClientId] = useState(null);
   const [showClientModal, setShowClientModal] = useState(false);
+  const [showAiModal, setShowAiModal] = useState(false);
+
+  const handleApplyAiData = ({ items: newItems, client: newClient, details: newDetails, replaceItems }) => {
+    if (Array.isArray(newItems) && newItems.length > 0) {
+      if (replaceItems) {
+        setItems(newItems);
+      } else {
+        setItems(prev => [...prev.filter(i => (i.name || '').trim() || (i.rate || 0) > 0), ...newItems]);
+      }
+    }
+    if (newClient && newClient.name) {
+      setClient(prev => ({
+        ...prev,
+        name: newClient.name || prev.name,
+        gstin: newClient.gstin || prev.gstin,
+        address: newClient.address || prev.address,
+        phone: newClient.phone || prev.phone,
+        email: newClient.email || prev.email,
+        state: newClient.state || prev.state,
+      }));
+    }
+    if (newDetails) {
+      setDetails(prev => ({
+        ...prev,
+        invoiceNumber: newDetails.invoiceNumber || prev.invoiceNumber,
+        invoiceDate: newDetails.invoiceDate || prev.invoiceDate,
+        dueDate: newDetails.dueDate || prev.dueDate,
+        placeOfSupply: newDetails.placeOfSupply || prev.placeOfSupply,
+      }));
+    }
+  };
   const [modalClient, setModalClient] = useState(null);
   const [isEditingClient, setIsEditingClient] = useState(false);
   const clientNameRef = useRef(null);
@@ -3377,6 +3409,37 @@ export default function InvoiceGenerator({ onBack, profile: profileProp, editing
     openWhatsAppShare(client?.phone, lines.join('\n'));
   };
 
+  const shareEmail = () => {
+    const cur = invoiceOptions.currency || 'INR';
+    const total = formatCurrency(Number(totals.total) || 0, cur);
+    const dateStr = details.invoiceDate ? new Date(details.invoiceDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '';
+    const businessName = profile?.businessName || 'Our Business';
+
+    const lines = [
+      `Dear ${client?.name || 'Customer'},`,
+      '',
+      `Please find details for invoice ${details.invoiceNumber || 'Draft'}:`,
+      `Invoice Date: ${dateStr}`,
+      `Total Amount: ${total}`,
+    ];
+    if (totals.balanceDue > 0.005) {
+      lines.push(`Balance Due: ${formatCurrency(totals.balanceDue, cur)}`);
+    }
+    if (profile?.upiId) {
+      lines.push(`UPI Payment ID: ${profile.upiId}`);
+    }
+    if (profile?.accountNumber) {
+      lines.push(`Bank Account: A/C ${profile.accountNumber}, IFSC: ${profile.ifsc || ''}`);
+    }
+    lines.push('');
+    lines.push('Thank you for your business!');
+    lines.push(`— ${businessName}`);
+
+    const subject = `Invoice ${details.invoiceNumber || ''} - ${total} from ${businessName}`;
+    openEmailShare(client?.email, subject, lines.join('\n'));
+    toast('Email client opened with invoice details', 'info');
+  };
+
   const exportEWayBill = () => {
     if (!profile?.gstin) { toast('Set your GSTIN in Settings first', 'warning'); return; }
     // v1.10.74 - a blank invoice made an E-Way Bill JSON the portal rejects.
@@ -4670,6 +4733,11 @@ export default function InvoiceGenerator({ onBack, profile: profileProp, editing
             ))}
             <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
               <button className="btn btn-secondary mt-2" onClick={addItem}><Plus size={18} /> Add Item</button>
+              <button type="button" className="btn btn-secondary mt-2" onClick={() => setShowAiModal(true)}
+                style={{ borderColor: 'var(--primary)', color: 'var(--primary)' }}
+                title="Upload bill, image, PDF, or JSON to auto-fill items using Gemini AI">
+                <Sparkles size={16} /> AI Auto-Fill / Upload Bill
+              </button>
               {!hasDeliveryCharge && !servicesMode && (
                 <button type="button" className="btn btn-secondary mt-2" onClick={addDeliveryCharge}
                   title="Adds a 'Delivery charges' line, taxed at the goods' GST rate (composite supply)">
@@ -5003,6 +5071,13 @@ export default function InvoiceGenerator({ onBack, profile: profileProp, editing
 
       {/* P2 #32 — 3-option leave modal. Replaces the previous confusing
           browser confirm() where OK=save was counterintuitive. */}
+      <AiInvoiceModal
+        isOpen={showAiModal}
+        onClose={() => setShowAiModal(false)}
+        onApply={handleApplyAiData}
+        currentItemsCount={items.length}
+      />
+
       {leaveModal && (
         <div className="modal-overlay" onClick={leaveActions.cancel}>
           <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: '460px' }}>

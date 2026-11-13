@@ -7,7 +7,7 @@ import { billInInr, billCurrency as fxBillCurrency, baseCurrencyOf } from '../ut
 import { withClientTds } from '../utils/tdsTcs';
 import { prepareEInvoices, parseIrpResponse, matchIrnEntries, downloadJson, einvoiceFileName } from '../utils/einvoice';
 import { EInvoiceReport } from './EInvoiceModal';
-import { openWhatsAppShare } from '../utils/share';
+import { openWhatsAppShare, openEmailShare, buildReceiptShareMessage } from '../utils/share';
 import PageHeader from './PageHeader';
 import LockButton from './LockButton';
 import ActionsMenu from './ActionsMenu';
@@ -111,6 +111,37 @@ function ReceiptModal({ target, onClose }) {
     'bank-transfer': 'Bank Transfer', 'upi': 'UPI', 'cash': 'Cash',
     'cheque': 'Cheque', 'card': 'Card', 'other': 'Other',
   }[payment.mode] || payment.mode;
+
+  const shareReceiptWhatsApp = () => {
+    const msg = buildReceiptShareMessage({
+      receiptNo,
+      date: payment.date,
+      clientName,
+      amount: payment.amount,
+      paymentMode: paymentModeLabel,
+      referenceNo: payment.note,
+      againstInvoice: bill.invoiceNumber,
+    }, { businessName });
+    openWhatsAppShare(clientPhone, msg);
+    toast('WhatsApp opened with receipt details', 'info');
+  };
+
+  const shareReceiptEmail = () => {
+    const rcpObj = {
+      receiptNo,
+      date: payment.date,
+      clientName,
+      amount: payment.amount,
+      paymentMode: paymentModeLabel,
+      referenceNo: payment.note,
+      againstInvoice: bill.invoiceNumber,
+    };
+    const subject = `Payment Receipt ${receiptNo} - ${formatCurrency(payment.amount, currency)}`;
+    const msg = buildReceiptShareMessage(rcpObj, { businessName }).replace(/\*/g, '');
+    const clientEmail = bill.data?.client?.email || '';
+    openEmailShare(clientEmail, subject, msg);
+    toast('Email client opened with receipt details', 'info');
+  };
 
   const doPrint = () => {
     let styleEl = document.getElementById('fgsb-receipt-print-css');

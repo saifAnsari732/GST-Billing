@@ -16,6 +16,7 @@ import { fileURLToPath } from 'url';
 import { redact } from './src/utils/errorReport.js';
 import { validateCashEntry, cleanCashEntry } from './src/utils/cashBook.js';
 import { validatePurchasePayments } from './src/utils/purchasePayments.js';
+import { handleAiStatus, handleAiParse } from './src/serverAi.js';
 import { templateTotals, clientYearToDate, nextCounterValue, startFor, numberSeriesFor, counterKeyFor, formatDocNumber, businessKeyOf, getFinancialYearLabel, INVOICE_TYPES } from './src/utils.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -104,10 +105,13 @@ const LOCAL_PREFS_ROUTE = '/api/local-prefs';
 // profile, logo and signature images included, so a few hundred invoices
 // with a logo passed 5mb and Restore failed with "Request body too large".
 const IMPORT_ROUTE = '/api/import';
+const AI_ROUTE = '/api/ai/parse';
 const jsonBody = express.json({ limit: '5mb' });
 const importBody = express.json({ limit: '500mb' });
+const aiBody = express.json({ limit: '25mb' });
 app.use((req, res, next) => {
   if (req.path === LOCAL_PREFS_ROUTE) return next();
+  if (req.path === AI_ROUTE) return aiBody(req, res, next);
   return (req.path === IMPORT_ROUTE ? importBody : jsonBody)(req, res, next);
 });
 
@@ -1275,6 +1279,10 @@ const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'ut
 app.get('/api/version', (req, res) => {
   res.json({ current: pkg.version });
 });
+
+// ---- Gemini AI Smart Extraction ----
+app.get('/api/ai/status', handleAiStatus);
+app.post('/api/ai/parse', handleAiParse);
 
 // v1.10.83 - the browser's Problem log copies each entry here, so errors.log
 // holds both sides of a failure. Redacted again (never trust the sender), one
